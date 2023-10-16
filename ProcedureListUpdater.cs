@@ -35,6 +35,53 @@ namespace PgSqlProcedureListUpdater
             mOptions = options;
         }
 
+        private bool ExtractArguments(
+            string sourceDescription,
+            StringBuilder objectHeader,
+            ICollection<string> argumentList)
+        {
+            const string COMMA_PLACEHOLDER = "_@_LITERAL_COMMA_@_";
+
+            argumentList.Clear();
+
+            // Determine the procedure or function argument names and types
+            var argumentMatch = mArgumentListMatcher.Match(objectHeader.ToString());
+
+            if (!argumentMatch.Success)
+            {
+                OnWarningEvent("Header found, but unable to parse the arguments for {0}: {1}", sourceDescription, objectHeader);
+                return false;
+            }
+
+            var argumentListMatch = argumentMatch.Groups["Arguments"].Value;
+
+            if (argumentListMatch.Trim().Length > 0)
+            {
+                var match = mCommaArgumentMatcher.Match(argumentMatch.Groups["Arguments"].Value);
+
+                string argumentListToParse;
+
+                if (match.Success)
+                {
+                    argumentListToParse = mCommaArgumentMatcher.Replace(
+                        argumentMatch.Groups["Arguments"].Value,
+                        string.Format("'{0}${{Spacer}}", COMMA_PLACEHOLDER));
+                }
+                else
+                {
+                    argumentListToParse = argumentMatch.Groups["Arguments"].Value;
+                }
+
+                // ReSharper disable once LoopCanBeConvertedToQuery
+                foreach (var argument in argumentListToParse.Split(','))
+                {
+                    argumentList.Add(argument.Trim().Replace(COMMA_PLACEHOLDER, ","));
+                }
+            }
+
+            return true;
+        }
+
         private bool GetObjectNameAndType(string dataLine, Regex objectNameMatcher, out string objectName, out string objectType)
         {
             var nameMatch = objectNameMatcher.Match(dataLine);
@@ -47,7 +94,7 @@ namespace PgSqlProcedureListUpdater
                 return false;
             }
 
-            objectName = nameMatch.Groups["ObjectName"].Value;
+            objectName = nameMatch.Groups["ObjectName"].Value.Trim();
             objectType = nameMatch.Groups["ObjectType"].Value;
 
             return true;
@@ -72,8 +119,8 @@ namespace PgSqlProcedureListUpdater
                     headerLinesAfterArguments.Add(headerTextAfterArguments.Substring(0, languageIndex));
                 }
 
-                headerLinesAfterArguments.Add(headerTextAfterArguments.Substring(languageIndex, asBodyDelimiterIndex - languageIndex));
-                headerLinesAfterArguments.Add(headerTextAfterArguments.Substring(asBodyDelimiterIndex));
+                headerLinesAfterArguments.Add(headerTextAfterArguments.Substring(languageIndex, asBodyDelimiterIndex - languageIndex).Trim());
+                headerLinesAfterArguments.Add(headerTextAfterArguments.Substring(asBodyDelimiterIndex).Trim());
 
                 return;
             }
@@ -122,13 +169,18 @@ namespace PgSqlProcedureListUpdater
 
                 Console.WriteLine();
                 OnStatusEvent("Reading " + PathUtils.CompactPathString(inputFile.FullName, 100));
+                OnStatusEvent("Writing " + PathUtils.CompactPathString(outputFilePath, 100));
 
-                using var reader = new StreamReader(new FileStream(inputFile.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
+                using var reader = new StreamReader(new FileStream(inputFile.FullName, FileMode.Open, FileAccess.Read, FileShare.Read));
                 using var writer = new StreamWriter(new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.Read));
 
                 var objectNameMatcher = new Regex("CREATE OR REPLACE (?<ObjectType>PROCEDURE|FUNCTION) *(?<ObjectName>[^(]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
                 var currentLineNumber = 0;
+                var lastStatusTime = DateTime.UtcNow;
+
+                var objectsProcessed = 0;
+                var objectsUpdated = 0;
 
                 while (!reader.EndOfStream)
                 {
@@ -152,6 +204,11 @@ namespace PgSqlProcedureListUpdater
                         OnWarningEvent("Unable to parse out the procedure or function name from {0}", dataLine);
                         writer.WriteLine(dataLine);
                         continue;
+                    }
+
+                    if (objectNameWithSchema.Equals("public.add_bom_tracking_dataset"))
+                    {
+                        Console.WriteLine("Check this code");
                     }
 
                     string fileToFind;
@@ -200,6 +257,47 @@ namespace PgSqlProcedureListUpdater
                     {
                         OnWarningEvent("Aborting since ReadHeaderAndBody returned false");
                         return false;
+                    }
+
+                    var sourceArgumentList = new List<string>();
+
+                    var argumentsFound = ExtractArguments(sourceDescription, sourceObjectHeader, sourceArgumentList);
+
+                    if (!argumentsFound)
+                    {
+                        OnWarningEvent("Aborting since ExtractArguments returned false");
+                        return false;
+                    }
+
+                    var argumentNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                    // ToDo: properly parse arguments that include a comment
+                    // For example:
+                    // _replaceExistingMassMods int = 0,       -- Leave this as an integer since called from a web page
+
+                    foreach (var argument in sourceArgumentList)
+                    {
+                        var match = mArgumentMatcher.Match(argument);
+
+                        if (match.Success)
+                        {
+                            var argumentName = match.Groups["Name"].Value;
+
+                            if (argumentNameMap.ContainsKey(argumentName))
+                            {
+                                OnWarningEvent("Argument name map for {0} {1} already has argument {2}; skipping",
+                                    objectType, objectNameWithSchema, argument);
+                            }
+                            else
+                            {
+                                argumentNameMap.Add(argumentName, argumentName);
+                            }
+                        }
+                        else
+                        {
+                            OnWarningEvent("Argument for {0} {1} did not match the expected format: {2}",
+                                objectType, objectNameWithSchema, argument);
+                        }
                     }
 
                     if (mOptions.VerboseOutput)
@@ -523,25 +621,17 @@ namespace PgSqlProcedureListUpdater
                         return false;
                     }
 
-                    // Determine the procedure or function argument names and types
-                    var argumentMatch = argumentListMatcher.Match(objectHeader.ToString());
+                    var argumentsFound = ExtractArguments(sourceDescription, objectHeader, argumentList);
 
-                    if (!argumentMatch.Success)
+                    if (!argumentsFound)
                     {
-                        OnWarningEvent("Header found, but unable to parse the arguments for the {0}, file: {1}", objectType, inputFile.FullName);
                         return false;
-                    }
-
-                    // ReSharper disable once LoopCanBeConvertedToQuery
-                    foreach (var argument in argumentMatch.Groups["Arguments"].Value.Split(','))
-                    {
-                        argumentList.Add(argument.Trim());
                     }
 
                     // Find the text that occurs after the closing parenthesis
 
-                    // This tracks the text that occurs after the closing parenthesis of the procedure or function's argument list
-                    // (it does not include line feeds)
+                        // This tracks the text that occurs after the closing parenthesis of the procedure or function's argument list
+                        // (it does not include line feeds)
                     var headerTextAfterArguments = new StringBuilder();
 
                     var appendHeaderLines = false;
@@ -571,7 +661,7 @@ namespace PgSqlProcedureListUpdater
                         // Populate headerLinesAfterArguments using headerTextAfterArguments
 
                         ParseHeaderLinesAfterArguments(
-                            headerTextAfterArguments.ToString(),
+                            headerTextAfterArguments.ToString().Trim(),
                             objectBodyDelimiter,
                             objectType,
                             inputFile,
@@ -617,7 +707,7 @@ namespace PgSqlProcedureListUpdater
                         return false;
                     }
 
-                    headerLinesAfterArguments.Add("RETURNS TABLE(");
+                    headerLinesAfterArguments.Add("RETURNS TABLE (");
 
                     var tableColumns = columnListMatch.Groups["TableColumns"].Value.Split(',').ToList();
                     var indexEnd = tableColumns.Count - 1;
