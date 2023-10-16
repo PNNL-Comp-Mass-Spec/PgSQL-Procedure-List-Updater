@@ -642,18 +642,110 @@ namespace PgSqlProcedureListUpdater
             }
         }
 
+
+        /// <summary>
+        /// Write the updated header and body for the procedure of function
+        /// </summary>
+        /// <param name="writer"></param>
+        /// <param name="objectType"></param>
+        /// <param name="objectNameWithSchema"></param>
+        /// <param name="objectArgumentList"></param>
+        /// <param name="headerLinesAfterArguments"></param>
+        /// <param name="objectBody"></param>
+        /// <param name="argumentNameMap">Argument names for the procedure or function, as read from the input file</param>
+        /// <returns>True if successful, false if an error</returns>
         private bool WriteHeaderAndBody(
-            StreamWriter writer,
+            TextWriter writer,
             string objectType,
             string objectNameWithSchema,
-            List<string>
-                objectArgumentList,
-            List<string> headerLinesAfterArguments,
-            List<string> objectBody)
+            IReadOnlyList<string> objectArgumentList,
+            IEnumerable<string> headerLinesAfterArguments,
+            IEnumerable<string> objectBody,
+            Dictionary<string, string> argumentNameMap)
         {
             try
             {
-                throw new NotImplementedException();
+                writer.WriteLine("CREATE OR REPLACE {0} {1} {2}", objectType, objectNameWithSchema, objectArgumentList.Count == 0 ? "()" : "(");
+
+                if (objectArgumentList.Count > 0)
+                {
+                    var indexEnd = objectArgumentList.Count - 1;
+
+                    var updatedArgument = new StringBuilder();
+
+                    for (var i = 0; i <= indexEnd; i++)
+                    {
+                        updatedArgument.Clear();
+
+                        var match = mArgumentMatcher.Match(objectArgumentList[i]);
+
+                        if (match.Success)
+                        {
+                            var argDirection = match.Groups["Direction"].Value;
+
+                            if (string.IsNullOrWhiteSpace(argDirection))
+                            {
+                                if (!objectType.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    OnWarningEvent("Argument for {0} {1} did not have a direction: {2}",
+                                        objectType, objectNameWithSchema, objectArgumentList[i]);
+                                }
+                            }
+                            else if (!argDirection.Equals("IN", StringComparison.OrdinalIgnoreCase))
+                            {
+                                updatedArgument.Append(argDirection);
+                            }
+
+                            // ToDo: Capitalize the argument name based on the capitalization in the input file
+
+                            var argumentName = match.Groups["Name"].Value;
+                            string argumentNameToUse;
+
+                            if (argumentNameMap.TryGetValue(argumentName, out var argumentNameCapitalized))
+                            {
+                                argumentNameToUse = argumentNameCapitalized;
+                            }
+                            else if (argumentName.Equals("_returnCode", StringComparison.OrdinalIgnoreCase))
+                            {
+                                argumentNameToUse = "_returnCode";
+                            }
+                            else
+                            {
+                                argumentNameToUse = argumentName;
+                            }
+
+                            updatedArgument.AppendFormat("{0} {1}", argumentNameToUse, match.Groups["Type"].Value);
+
+                            var defaultValue = match.Groups["Default"].Value;
+
+                            if (!string.IsNullOrWhiteSpace(defaultValue))
+                            {
+                                updatedArgument.AppendFormat(" {0}", defaultValue.Trim().Replace("DEFAULT ", "= ").Replace("::text", string.Empty));
+                            }
+                        }
+                        else
+                        {
+                            OnWarningEvent("Argument for {0} {1} did not match the expected format: {2}",
+                                objectType, objectNameWithSchema, objectArgumentList[i]);
+
+                            updatedArgument.Append(objectArgumentList[i]);
+                        }
+
+                        writer.WriteLine("    {0}{1}", updatedArgument, i < indexEnd ? "," : string.Empty);
+                    }
+
+                    writer.WriteLine(")");
+                }
+
+                foreach (var headerLine in headerLinesAfterArguments)
+                {
+                    writer.WriteLine(headerLine);
+                }
+
+                foreach (var bodyLine in objectBody)
+                {
+                    writer.WriteLine(bodyLine);
+                }
 
                 return true;
             }
