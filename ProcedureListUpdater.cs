@@ -190,6 +190,17 @@ namespace PgSqlProcedureListUpdater
                         return false;
                     }
 
+                    if (mOptions.VerboseOutput)
+                    {
+                        OnStatusEvent("Reading file {0}", PathUtils.CompactPathString(foundFiles[0].Name, 120));
+                    }
+
+                    if (DateTime.UtcNow.Subtract(lastStatusTime).TotalSeconds >= 0.2)
+                    {
+                        ShowUpdateStatus(objectsUpdated, objectsProcessed);
+                        lastStatusTime = DateTime.UtcNow;
+                    }
+
                     // Load the object info from the DDL file with the updated version of the procedure or function
                     var sqlFileRead = ReadSqlFile(
                         foundFiles[0],
@@ -213,6 +224,7 @@ namespace PgSqlProcedureListUpdater
                             writer.WriteLine(bodyLine);
                         }
 
+                        objectsProcessed++;
                         continue;
                     }
 
@@ -222,34 +234,26 @@ namespace PgSqlProcedureListUpdater
                         objectNameWithSchema,
                         objectArgumentList,
                         headerLinesAfterArguments,
-                        objectBody);
+                        objectBody,
+                        argumentNameMap);
 
                     if (writeSuccess)
+                    {
+                        objectsProcessed++;
+                        objectsUpdated++;
                         continue;
+                    }
 
                     OnWarningEvent("Aborting since WriteHeaderAndBody returned false");
                     return false;
-
-                    // Find the procedure or function arguments (if any)
-                    // Steps to implement:
-
-                    // 1) Find the $$ (or similar) by reading forward line-by-line and caching the lines, looking for @"AS +\$[^$]*\$"
-
-                    // 2) Find the corresponding $$ (or similar), again, reading forward line-by-line and caching the lines
-                    //    If another "CREATE OR REPLACE" is found and the matching $$ is not found, show a warning and do not update this procedure or function
-
-                    // 3) Parse the procedure or function argument names in the input file to determine the preferred casing
-
-                    // 4) Read the .sql file
-                    //    - Parse the argument names
-                    //    - If it's a function that has RETURNS TABLE, parse the column names between ( and ) so we can format things nicely in the output file
-                    //    - Find the text between $$ (or similar) and the corresponding $$
-                    //    - If found, write the updating procedure or function DDL to the output file
-
                 }
 
                 Console.WriteLine();
                 OnStatusEvent("Processed {0} lines in the input file", currentLineNumber);
+                ShowUpdateStatus(objectsUpdated, objectsProcessed);
+
+                Console.WriteLine();
+                OnStatusEvent("Output file: " + outputFilePath);
 
                 return true;
             }
@@ -642,6 +646,12 @@ namespace PgSqlProcedureListUpdater
             }
         }
 
+        private void ShowUpdateStatus(int objectsUpdated, int objectsProcessed, bool processingComplete = false)
+        {
+            OnStatusEvent("{0,-9} procedures or functions {1} updated using .sql files",
+                string.Format("{0}{1} / {2}", objectsUpdated < 99 ? " " : string.Empty, objectsUpdated, objectsProcessed),
+                processingComplete ? "were" : "have been");
+        }
 
         /// <summary>
         /// Write the updated header and body for the procedure of function
