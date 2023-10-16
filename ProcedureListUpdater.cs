@@ -14,6 +14,18 @@ namespace PgSqlProcedureListUpdater
 
         private readonly ProcedureListUpdaterOptions mOptions;
 
+        private readonly Regex mArgumentListMatcher = new(@"\((?<Arguments>[^)]*)\)", RegexOptions.Compiled);
+
+        private readonly Regex mArgumentMatcher = new("((?<Direction>INOUT|OUT|IN) +)?(?<Name>[^ ]+) +(?<Type>[^ ]+)(?<Default>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private readonly Regex mCommaArgumentMatcher = new("',(?<Spacer> *)'", RegexOptions.Compiled);
+
+        private readonly Regex mDollarMatcher = new(@"(AS +|^ *)(?<Delimiter>\$[^$]*\$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private readonly Regex mReturnedColumnListMatcher = new(@"\bTABLE *\((?<TableColumns>[^)]+)\) *(?<LanguageAndOptions>)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private readonly Regex mReturnsMatcher = new(@"\bRETURNS +(?<ReturnType>[^ (]+) *(?<LanguageAndOptions>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         /// <summary>
         /// Constructor
         /// </summary>
@@ -337,8 +349,6 @@ namespace PgSqlProcedureListUpdater
         {
             try
             {
-                var dollarMatcher = new Regex(@"AS +(?<Delimiter>\$[^$]*\$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
                 while (!reader.EndOfStream)
                 {
                     var dataLine = reader.ReadLine();
@@ -363,7 +373,7 @@ namespace PgSqlProcedureListUpdater
 
                     objectHeader.AppendFormat(" {0}", dataLine);
 
-                    var match = dollarMatcher.Match(dataLine);
+                    var match = mDollarMatcher.Match(dataLine);
 
                     if (!match.Success)
                         continue;
@@ -446,8 +456,6 @@ namespace PgSqlProcedureListUpdater
 
             try
             {
-                var argumentListMatcher = new Regex(@"\((?<Arguments>[^)]+)\)", RegexOptions.Compiled);
-
                 // Each line of the object header
                 var headerLines = new List<string>();
 
@@ -575,9 +583,7 @@ namespace PgSqlProcedureListUpdater
                     // Determine the return type of the function
                     // If it is a table, parse the column names
 
-                    var returnsMatcher = new Regex(@"\bRETURNS +(?<ReturnType>[^ (]+) *(?<LanguageAndOptions>)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-                    var returnMatch = returnsMatcher.Match(headerTextAfterArguments.ToString());
+                    var returnMatch = mReturnsMatcher.Match(headerTextAfterArguments.ToString());
 
                     if (!returnMatch.Success)
                     {
@@ -601,9 +607,7 @@ namespace PgSqlProcedureListUpdater
                         return true;
                     }
 
-                    var returnedColumnListMatcher = new Regex(@"\bTABLE *\((?<TableColumns>[^)]+)\) *(?<LanguageAndOptions>)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-                    var columnListMatch = returnedColumnListMatcher.Match(headerTextAfterArguments.ToString());
+                    var columnListMatch = mReturnedColumnListMatcher.Match(headerTextAfterArguments.ToString());
 
                     if (!columnListMatch.Success)
                     {
