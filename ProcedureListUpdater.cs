@@ -36,44 +36,61 @@ namespace PgSqlProcedureListUpdater
         }
 
         private bool ExtractArguments(
+            string objectType,
             string sourceDescription,
+            ICollection<string> headerLines,
             StringBuilder objectHeader,
-            ICollection<string> argumentList)
+            ICollection<ArgumentInfo> argumentList)
         {
             const string COMMA_PLACEHOLDER = "_@_LITERAL_COMMA_@_";
 
             argumentList.Clear();
 
             // Determine the procedure or function argument names and types
-            var argumentMatch = mArgumentListMatcher.Match(objectHeader.ToString());
 
-            if (!argumentMatch.Success)
-            {
-                OnWarningEvent("Header found, but unable to parse the arguments for {0}: {1}", sourceDescription, objectHeader);
+            var success = ExtractArgumentsFromHeader(objectType, sourceDescription, objectHeader, out var argumentListMatch);
+
+            if (!success)
                 return false;
+
+            if (argumentListMatch.Trim().Length == 0)
+                return true;
+
+
+            // Split the argument list on commas
+
+            // ReSharper disable once LoopCanBeConvertedToQuery
+            foreach (var argument in argumentListToParse.Split(','))
+            {
+                // Convert any comma placeholders back to actual commas
+                var argumentInfo = new ArgumentInfo(argument.Trim().Replace(COMMA_PLACEHOLDER, ","));
+
+                var nameWithSpace = string.Format("{0} ", argumentInfo.Definition.Replace("public.citext", "citext"));
+
+                // Look for the argument in headerLines
+                // If the argument has a comment, include the comment when adding to argumentList
+                foreach (var headerLine in headerLines)
+                {
+                    var argumentIndex = headerLine.IndexOf(nameWithSpace, StringComparison.OrdinalIgnoreCase);
+
+                    if (argumentIndex < 0)
+                        continue;
+
+                    var commentIndex = headerLine.IndexOf("--", StringComparison.Ordinal);
+
+                    if (commentIndex < 0)
+                        break;
+
+                    argumentInfo.Comment = headerLine.Substring(commentIndex);
+                    break;
+                }
+
+                argumentList.Add(argumentInfo);
             }
 
-            var argumentListMatch = argumentMatch.Groups["Arguments"].Value;
+            return true;
+        }
 
-            if (argumentListMatch.Trim().Length > 0)
-            {
-                var match = mCommaArgumentMatcher.Match(argumentMatch.Groups["Arguments"].Value);
-
-                string argumentListToParse;
-
-                if (match.Success)
-                {
-                    argumentListToParse = mCommaArgumentMatcher.Replace(
-                        argumentMatch.Groups["Arguments"].Value,
-                        string.Format("'{0}${{Spacer}}", COMMA_PLACEHOLDER));
-                }
-                else
-                {
-                    argumentListToParse = argumentMatch.Groups["Arguments"].Value;
-                }
-
-                // ReSharper disable once LoopCanBeConvertedToQuery
-                foreach (var argument in argumentListToParse.Split(','))
                 {
                     argumentList.Add(argument.Trim().Replace(COMMA_PLACEHOLDER, ","));
                 }
@@ -259,7 +276,7 @@ namespace PgSqlProcedureListUpdater
                         return false;
                     }
 
-                    var sourceArgumentList = new List<string>();
+                    var sourceArgumentList = new List<ArgumentInfo>();
 
                     var argumentsFound = ExtractArguments(sourceDescription, sourceObjectHeader, sourceArgumentList);
 
@@ -542,11 +559,11 @@ namespace PgSqlProcedureListUpdater
             string objectType,
             string objectNameWithSchema,
             Regex objectNameMatcher,
-            out List<string> argumentList,
+            out List<ArgumentInfo> argumentList,
             out List<string> headerLinesAfterArguments,
             out List<string> objectBody)
         {
-            argumentList = new List<string>();
+            argumentList = new List<ArgumentInfo>();
             headerLinesAfterArguments = new List<string>();
 
             // Typically $$, but is sometimes $_$
@@ -762,7 +779,7 @@ namespace PgSqlProcedureListUpdater
             TextWriter writer,
             string objectType,
             string objectNameWithSchema,
-            IReadOnlyList<string> objectArgumentList,
+            IReadOnlyList<ArgumentInfo> objectArgumentList,
             IEnumerable<string> headerLinesAfterArguments,
             IEnumerable<string> objectBody,
             Dictionary<string, string> argumentNameMap)
