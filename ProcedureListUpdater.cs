@@ -765,10 +765,24 @@ namespace PgSqlProcedureListUpdater
 
                     if (!returnType.Equals("Table", StringComparison.OrdinalIgnoreCase))
                     {
-                        headerLinesAfterArguments.Add(string.Format("RETURNS {0}", returnType));
+                        string returnTypeToUse;
+                        string languageAndOptions;
+
+                        if (returnMatch.Groups["LanguageAndOptions"].Value.StartsWith("without time zone"))
+                        {
+                            returnTypeToUse = string.Format("{0} without time zone", returnType);
+                            languageAndOptions = returnMatch.Groups["LanguageAndOptions"].Value.Substring("without time zone".Length);
+                        }
+                        else
+                        {
+                            returnTypeToUse = returnType;
+                            languageAndOptions = returnMatch.Groups["LanguageAndOptions"].Value;
+                        }
+
+                        headerLinesAfterArguments.Add(string.Format("RETURNS {0}", returnTypeToUse));
 
                         ParseHeaderLinesAfterArguments(
-                            returnMatch.Groups["LanguageAndOptions"].Value,
+                            languageAndOptions,
                             objectBodyDelimiter,
                             objectType,
                             inputFile,
