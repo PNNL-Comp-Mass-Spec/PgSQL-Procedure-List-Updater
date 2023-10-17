@@ -905,7 +905,7 @@ namespace PgSqlProcedureListUpdater
             IReadOnlyList<ArgumentInfo> objectArgumentList,
             IEnumerable<string> headerLinesAfterArguments,
             IEnumerable<string> objectBody,
-            Dictionary<string, string> argumentNameMap)
+            IReadOnlyDictionary<string, string> argumentNameMap)
         {
             try
             {
@@ -932,15 +932,13 @@ namespace PgSqlProcedureListUpdater
                                 if (!objectType.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase))
                                 {
                                     OnWarningEvent("Argument for {0} {1} did not have a direction: {2}",
-                                        objectType, objectNameWithSchema, objectArgumentList[i]);
+                                        objectType.ToLower(), objectNameWithSchema, objectArgumentList[i].Definition);
                                 }
                             }
                             else if (!argDirection.Equals("IN", StringComparison.OrdinalIgnoreCase))
                             {
-                                updatedArgument.Append(argDirection);
+                                updatedArgument.AppendFormat("{0} ", argDirection);
                             }
-
-                            // ToDo: Capitalize the argument name based on the capitalization in the input file
 
                             var argumentName = match.Groups["Name"].Value;
                             string argumentNameToUse;
@@ -955,6 +953,9 @@ namespace PgSqlProcedureListUpdater
                             }
                             else
                             {
+                                OnWarningEvent("Source file does not have argument {0} for {1} {2}",
+                                    argumentName, objectType.ToLower(), objectNameWithSchema);
+
                                 argumentNameToUse = argumentName;
                             }
 
@@ -970,7 +971,7 @@ namespace PgSqlProcedureListUpdater
                         else
                         {
                             OnWarningEvent("Argument for {0} {1} did not match the expected format: {2}",
-                                objectType, objectNameWithSchema, objectArgumentList[i]);
+                                objectType.ToLower(), objectNameWithSchema, objectArgumentList[i]);
 
                             updatedArgument.Append(objectArgumentList[i]);
                         }
