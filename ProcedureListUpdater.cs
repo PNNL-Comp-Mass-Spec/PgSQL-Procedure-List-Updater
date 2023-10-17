@@ -34,7 +34,7 @@ namespace PgSqlProcedureListUpdater
         /// <summary>
         /// This RegEx looks for the return type of a function
         /// </summary>
-        private readonly Regex mReturnsMatcher = new(@"\bRETURNS +(?<ReturnType>[^ (]+) *(?<LanguageAndOptions>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private readonly Regex mReturnsMatcher = new(@"\bRETURNS +(?<ReturnType>timestamp without time zone|[^ (]+) *(?<LanguageAndOptions>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
         /// Constructor
@@ -765,24 +765,10 @@ namespace PgSqlProcedureListUpdater
 
                     if (!returnType.Equals("Table", StringComparison.OrdinalIgnoreCase))
                     {
-                        string returnTypeToUse;
-                        string languageAndOptions;
-
-                        if (returnMatch.Groups["LanguageAndOptions"].Value.StartsWith("without time zone"))
-                        {
-                            returnTypeToUse = string.Format("{0} without time zone", returnType);
-                            languageAndOptions = returnMatch.Groups["LanguageAndOptions"].Value.Substring("without time zone".Length);
-                        }
-                        else
-                        {
-                            returnTypeToUse = returnType;
-                            languageAndOptions = returnMatch.Groups["LanguageAndOptions"].Value;
-                        }
-
-                        headerLinesAfterArguments.Add(string.Format("RETURNS {0}", returnTypeToUse));
+                        headerLinesAfterArguments.Add(string.Format("RETURNS {0}", returnType));
 
                         ParseHeaderLinesAfterArguments(
-                            languageAndOptions,
+                            returnMatch.Groups["LanguageAndOptions"].Value,
                             objectBodyDelimiter,
                             objectType,
                             inputFile,
