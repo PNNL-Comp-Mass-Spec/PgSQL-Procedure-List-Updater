@@ -26,7 +26,10 @@ namespace PgSqlProcedureListUpdater
         /// </summary>
         private readonly Regex mDollarMatcher = new(@"(AS +|^ *)(?<Delimiter>\$[^$]*\$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        private readonly Regex mReturnedColumnListMatcher = new(@"\bTABLE *\((?<TableColumns>[^)]+)\) *(?<LanguageAndOptions>)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        /// <summary>
+        /// This RegEx looks for the column names for functions that return a table
+        /// </summary>
+        private readonly Regex mReturnedColumnListMatcher = new(@"\bTABLE *\((?<TableColumns>[^)]+)\) *(?<LanguageAndOptions>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
         /// This RegEx looks for the return type of a function
@@ -702,8 +705,8 @@ namespace PgSqlProcedureListUpdater
 
                     // Find the text that occurs after the closing parenthesis
 
-                        // This tracks the text that occurs after the closing parenthesis of the procedure or function's argument list
-                        // (it does not include line feeds)
+                    // This tracks the text that occurs after the closing parenthesis of the procedure or function's argument list
+                    // (it does not include line feeds)
                     var headerTextAfterArguments = new StringBuilder();
 
                     var appendHeaderLines = false;
@@ -716,7 +719,12 @@ namespace PgSqlProcedureListUpdater
                             continue;
                         }
 
-                        var parenthesisIndex = headerLine.IndexOf(')');
+                        var returnsIndex = headerLine.IndexOf("RETURNS ", StringComparison.OrdinalIgnoreCase);
+
+                        var parenthesisIndex = returnsIndex > 0
+                            ? headerLine.Substring(0, returnsIndex).LastIndexOf(')')
+                            : headerLine.LastIndexOf(')');
+
                         if (parenthesisIndex < 0)
                             continue;
 
@@ -743,7 +751,7 @@ namespace PgSqlProcedureListUpdater
                     }
 
                     // Determine the return type of the function
-                    // If it is a table, parse the column names
+                    // If it is a table, parse the column names and types
 
                     var returnMatch = mReturnsMatcher.Match(headerTextAfterArguments.ToString());
 
@@ -786,13 +794,15 @@ namespace PgSqlProcedureListUpdater
 
                     for (var i = 0; i <= indexEnd; i++)
                     {
-                        headerLinesAfterArguments.Add(string.Format("    {0}{1}", tableColumns[i].Trim(), i < indexEnd ? "," : string.Empty));
+                        var columnNameAndType = tableColumns[i].Replace("public.citext", "citext");
+
+                        headerLinesAfterArguments.Add(string.Format("    {0}{1}", columnNameAndType.Trim(), i < indexEnd ? "," : string.Empty));
                     }
 
                     headerLinesAfterArguments.Add(")");
 
                     ParseHeaderLinesAfterArguments(
-                        returnMatch.Groups["LanguageAndOptions"].Value,
+                        columnListMatch.Groups["LanguageAndOptions"].Value,
                         objectBodyDelimiter,
                         objectType,
                         inputFile,
