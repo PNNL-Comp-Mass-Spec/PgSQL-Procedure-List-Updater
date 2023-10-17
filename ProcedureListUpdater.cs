@@ -12,18 +12,25 @@ namespace PgSqlProcedureListUpdater
     {
         // Ignore Spelling: Postgres
 
+        private const string COMMA_PLACEHOLDER = "_@_LITERAL_COMMA_@_";
+
         private readonly ProcedureListUpdaterOptions mOptions;
 
-        private readonly Regex mArgumentListMatcher = new(@"\((?<Arguments>[^)]*)\)", RegexOptions.Compiled);
-
+        /// <summary>
+        /// This RegEx matches the argument direction, name, type, and default value (if defined)
+        /// </summary>
         private readonly Regex mArgumentMatcher = new("((?<Direction>INOUT|OUT|IN) +)?(?<Name>[^ ]+) +(?<Type>[^ ]+)(?<Default>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        private readonly Regex mCommaArgumentMatcher = new("',(?<Spacer> *)'", RegexOptions.Compiled);
-
+        /// <summary>
+        /// This RegEx looks for lines with $$ or $_$ or $body$, optionally preceded by "AS "
+        /// </summary>
         private readonly Regex mDollarMatcher = new(@"(AS +|^ *)(?<Delimiter>\$[^$]*\$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private readonly Regex mReturnedColumnListMatcher = new(@"\bTABLE *\((?<TableColumns>[^)]+)\) *(?<LanguageAndOptions>)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        /// <summary>
+        /// This RegEx looks for the return type of a function
+        /// </summary>
         private readonly Regex mReturnsMatcher = new(@"\bRETURNS +(?<ReturnType>[^ (]+) *(?<LanguageAndOptions>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
@@ -42,8 +49,6 @@ namespace PgSqlProcedureListUpdater
             StringBuilder objectHeader,
             ICollection<ArgumentInfo> argumentList)
         {
-            const string COMMA_PLACEHOLDER = "_@_LITERAL_COMMA_@_";
-
             argumentList.Clear();
 
             // Determine the procedure or function argument names and types
@@ -56,6 +61,9 @@ namespace PgSqlProcedureListUpdater
             if (argumentListMatch.Trim().Length == 0)
                 return true;
 
+            // Replace any quoted commas with a placeholder
+
+            var argumentListToParse = ReplaceQuotedCommas(argumentListMatch);
 
             // Split the argument list on commas
 
@@ -91,9 +99,58 @@ namespace PgSqlProcedureListUpdater
             return true;
         }
 
+        private bool ExtractArgumentsFromHeader(
+            string objectType,
+            string sourceDescription,
+            StringBuilder objectHeader,
+            out string argumentListMatch)
+        {
+            var sourceHeaderText = objectHeader.ToString();
+
+            string headerText;
+
+            if (objectType.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase))
+            {
+                var returnsIndex = sourceHeaderText.IndexOf("RETURNS ", StringComparison.OrdinalIgnoreCase);
+
+                if (returnsIndex < 0)
                 {
-                    argumentList.Add(argument.Trim().Replace(COMMA_PLACEHOLDER, ","));
+                    OnWarningEvent("Header found, but 'RETURNS' not found and thus unable to parse the arguments for {0}: {1}", sourceDescription, objectHeader);
+                    argumentListMatch = string.Empty;
+                    return false;
                 }
+
+                headerText = sourceHeaderText.Substring(0, returnsIndex);
+            }
+            else
+            {
+                headerText = sourceHeaderText;
+            }
+
+            var openingParentheses = headerText.IndexOf("(", StringComparison.Ordinal);
+            var closingParentheses = headerText.LastIndexOf(")", StringComparison.Ordinal);
+
+            if (openingParentheses < 0)
+            {
+                OnWarningEvent("Header found, but '(' not found and thus cannot parse the arguments for {0}: {1}", sourceDescription, objectHeader);
+                argumentListMatch = string.Empty;
+                return false;
+            }
+
+            if (closingParentheses < 0)
+            {
+                OnWarningEvent("Header found, but ')' not found and thus cannot parse the arguments for {0}: {1}", sourceDescription, objectHeader);
+                argumentListMatch = string.Empty;
+                return false;
+            }
+
+            if (closingParentheses == openingParentheses + 1)
+            {
+                argumentListMatch = string.Empty;
+            }
+            else
+            {
+                argumentListMatch = headerText.Substring(openingParentheses + 1, closingParentheses - openingParentheses - 1);
             }
 
             return true;
@@ -278,7 +335,7 @@ namespace PgSqlProcedureListUpdater
 
                     var sourceArgumentList = new List<ArgumentInfo>();
 
-                    var argumentsFound = ExtractArguments(sourceDescription, sourceObjectHeader, sourceArgumentList);
+                    var argumentsFound = ExtractArguments(objectType, sourceDescription, sourceHeaderLines, sourceObjectHeader, sourceArgumentList);
 
                     if (!argumentsFound)
                     {
@@ -288,13 +345,9 @@ namespace PgSqlProcedureListUpdater
 
                     var argumentNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                    // ToDo: properly parse arguments that include a comment
-                    // For example:
-                    // _replaceExistingMassMods int = 0,       -- Leave this as an integer since called from a web page
-
                     foreach (var argument in sourceArgumentList)
                     {
-                        var match = mArgumentMatcher.Match(argument);
+                        var match = mArgumentMatcher.Match(argument.Definition);
 
                         if (match.Success)
                         {
@@ -303,7 +356,7 @@ namespace PgSqlProcedureListUpdater
                             if (argumentNameMap.ContainsKey(argumentName))
                             {
                                 OnWarningEvent("Argument name map for {0} {1} already has argument {2}; skipping",
-                                    objectType, objectNameWithSchema, argument);
+                                    objectType.ToLower(), objectNameWithSchema, argument);
                             }
                             else
                             {
@@ -313,7 +366,7 @@ namespace PgSqlProcedureListUpdater
                         else
                         {
                             OnWarningEvent("Argument for {0} {1} did not match the expected format: {2}",
-                                objectType, objectNameWithSchema, argument);
+                                objectType.ToLower(), objectNameWithSchema, argument);
                         }
                     }
 
@@ -486,7 +539,9 @@ namespace PgSqlProcedureListUpdater
                         return false;
                     }
 
-                    objectHeader.AppendFormat(" {0}", dataLine);
+                    // Do not include comments when appending the data line to objectHeader (since that can cause spurious RegEx matches)
+
+                    objectHeader.AppendFormat(" {0}", RemoveComment(dataLine));
 
                     var match = mDollarMatcher.Match(dataLine);
 
@@ -638,7 +693,7 @@ namespace PgSqlProcedureListUpdater
                         return false;
                     }
 
-                    var argumentsFound = ExtractArguments(sourceDescription, objectHeader, argumentList);
+                    var argumentsFound = ExtractArguments(objectType, sourceDescription, headerLines, objectHeader, argumentList);
 
                     if (!argumentsFound)
                     {
@@ -757,6 +812,74 @@ namespace PgSqlProcedureListUpdater
             }
         }
 
+        private string RemoveComment(string dataLine)
+        {
+            var commentIndex = dataLine.IndexOf("--", StringComparison.Ordinal);
+
+            return commentIndex < 0
+                ? dataLine
+                : dataLine.Substring(0, commentIndex).Trim();
+        }
+
+        private string ReplaceQuotedCommas(string argumentList)
+        {
+            var startIndex = 0;
+
+            var updatedArgumentList = new StringBuilder();
+
+            while (true)
+            {
+                var quoteIndex = argumentList.Substring(startIndex).IndexOf('\'');
+
+                if (quoteIndex < 0)
+                    break;
+
+                quoteIndex += startIndex;
+
+                var nextQuoteIndex = argumentList.Substring(quoteIndex + 1).IndexOf('\'');
+
+                if (nextQuoteIndex < 0)
+                    break;
+
+                nextQuoteIndex += quoteIndex + 1;
+
+                if (nextQuoteIndex == quoteIndex + 1)
+                {
+                    startIndex = nextQuoteIndex + 1;
+                    continue;
+                }
+
+                var quotedValue = argumentList.Substring(quoteIndex + 1, nextQuoteIndex - quoteIndex - 1);
+
+                var commaIndex = quotedValue.IndexOf(',');
+
+                if (commaIndex < 0)
+                {
+                    startIndex = nextQuoteIndex + 1;
+                    continue;
+                }
+
+                if (startIndex < quoteIndex)
+                {
+                    updatedArgumentList.Append(argumentList, 0, quoteIndex);
+                }
+
+                updatedArgumentList.AppendFormat("'{0}'", quotedValue.Replace(",", COMMA_PLACEHOLDER));
+
+                if (nextQuoteIndex < argumentList.Length - 1)
+                {
+                    updatedArgumentList.Append(argumentList, nextQuoteIndex + 1, argumentList.Length - (nextQuoteIndex + 1));
+                }
+
+                var addedCharacterCount = updatedArgumentList.Length - argumentList.Length;
+
+                argumentList = updatedArgumentList.ToString();
+                startIndex = nextQuoteIndex + 1 + addedCharacterCount;
+            }
+
+            return argumentList;
+        }
+
         private void ShowUpdateStatus(int objectsUpdated, int objectsProcessed, bool processingComplete = false)
         {
             OnStatusEvent("{0,-9} procedures or functions {1} updated using .sql files",
@@ -798,7 +921,7 @@ namespace PgSqlProcedureListUpdater
                     {
                         updatedArgument.Clear();
 
-                        var match = mArgumentMatcher.Match(objectArgumentList[i]);
+                        var match = mArgumentMatcher.Match(objectArgumentList[i].Definition);
 
                         if (match.Success)
                         {
