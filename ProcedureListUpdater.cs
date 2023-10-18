@@ -34,7 +34,26 @@ namespace PgSqlProcedureListUpdater
         /// <summary>
         /// This RegEx looks for the return type of a function
         /// </summary>
-        private readonly Regex mReturnsMatcher = new(@"\bRETURNS +(?<ReturnType>timestamp without time zone|[^ (]+) *(?<LanguageAndOptions>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        /// <remarks>
+        /// Example matches:
+        ///   RETURNS anyelement
+        ///   RETURNS boolean
+        ///   RETURNS event_trigger
+        ///   RETURNS integer
+        ///   RETURNS numeric
+        ///   RETURNS public.citext
+        ///   RETURNS record
+        ///   RETURNS SETOF public.pg_stat_statements
+        ///   RETURNS SETOF record
+        ///   RETURNS smallint
+        ///   RETURNS TABLE(category text, value text)
+        ///   RETURNS TABLE(dy timestamp with time zone)
+        ///   RETURNS text
+        ///   RETURNS timestamp without time zone
+        ///   RETURNS trigger
+        ///   RETURNS xml
+        /// </remarks>
+        private readonly Regex mReturnsMatcher = new(@"\bRETURNS +(?<ReturnType>timestamp with(out)? time zone|(SETOF )?[^ (]+) *(?<LanguageAndOptions>.*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
         /// Constructor
@@ -630,7 +649,7 @@ namespace PgSqlProcedureListUpdater
         /// <param name="overloadNumberToFind">This is typically 1, but if an object is overloaded, this will be 2 when processing the second instance of an object</param>
         /// <param name="argumentList"></param>
         /// <param name="headerLinesAfterArguments">Tracks the text that occurs after the closing parenthesis of the procedure or function's argument list</param>
-        /// <param name="objectBody">Function or procedure text between the starting and ending $$</param>
+        /// <param name="objectBody">Procedure or function text between the starting and ending $$</param>
         /// <returns>True if successful, false if an error</returns>
         private bool ReadSqlFile(
             FileSystemInfo inputFile,
