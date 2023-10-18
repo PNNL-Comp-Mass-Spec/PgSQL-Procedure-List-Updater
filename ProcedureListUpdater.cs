@@ -385,8 +385,21 @@ namespace PgSqlProcedureListUpdater
 
                     var argumentNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+                    var argumentNumber = 0;
+
                     foreach (var argument in sourceArgumentList)
                     {
+                        argumentNumber++;
+
+                        if (string.IsNullOrWhiteSpace(argument.Definition))
+                        {
+                            OnWarningEvent("Argument {0} is empty for {1} {2}{3}",
+                                argumentNumber + 1, objectType.ToLower(), objectNameWithSchema,
+                                argumentNumber == sourceArgumentList.Count ? "; likely the final argument has a trailing comma" : string.Empty);
+
+                            continue;
+                        }
+
                         var match = mArgumentMatcher.Match(argument.Definition);
 
                         if (match.Success)
@@ -994,6 +1007,14 @@ namespace PgSqlProcedureListUpdater
                     for (var i = 0; i <= indexEnd; i++)
                     {
                         updatedArgument.Clear();
+
+                        if (string.IsNullOrWhiteSpace(objectArgumentList[i].Definition))
+                        {
+                            OnWarningEvent("Argument {0} is empty for {1} {2}",
+                                i + 1, objectType.ToLower(), objectNameWithSchema);
+
+                            continue;
+                        }
 
                         var match = mArgumentMatcher.Match(objectArgumentList[i].Definition);
 
