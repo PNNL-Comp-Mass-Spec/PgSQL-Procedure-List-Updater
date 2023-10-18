@@ -259,6 +259,9 @@ namespace PgSqlProcedureListUpdater
                 var objectsProcessed = 0;
                 var objectsUpdated = 0;
 
+                // Keys in this dictionary are procedure or function names, values are the number of instances of the object (used for handling overloaded procedures)
+                var objectNames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
                 while (!reader.EndOfStream)
                 {
                     var dataLine = reader.ReadLine();
@@ -283,7 +286,22 @@ namespace PgSqlProcedureListUpdater
                         continue;
                     }
 
-                    if (objectNameWithSchema.Equals("public.add_bom_tracking_dataset"))
+                    int overloadNumber;
+
+                    if (objectNames.TryGetValue(objectNameWithSchema, out var instanceCount))
+                    {
+                        instanceCount++;
+                        objectNames[objectNameWithSchema] = instanceCount;
+                        overloadNumber = instanceCount;
+                    }
+                    else
+                    {
+                        instanceCount = 1;
+                        objectNames.Add(objectNameWithSchema, instanceCount);
+                        overloadNumber = instanceCount;
+                    }
+
+                    if (objectNameWithSchema.Equals("public.retry_myemsl_upload"))
                     {
                         Console.WriteLine("Check this code");
                     }
@@ -390,6 +408,7 @@ namespace PgSqlProcedureListUpdater
                         objectType.ToLower(),
                         objectNameWithSchema,
                         objectNameMatcher,
+                        overloadNumber,
                         out var objectArgumentList,
                         out var headerLinesAfterArguments,
                         out var objectBody);
@@ -608,6 +627,7 @@ namespace PgSqlProcedureListUpdater
         /// <param name="objectType"></param>
         /// <param name="objectNameWithSchema"></param>
         /// <param name="objectNameMatcher"></param>
+        /// <param name="overloadNumberToFind">This is typically 1, but if an object is overloaded, this will be 2 when processing the second instance of an object</param>
         /// <param name="argumentList"></param>
         /// <param name="headerLinesAfterArguments">Tracks the text that occurs after the closing parenthesis of the procedure or function's argument list</param>
         /// <param name="objectBody">Function or procedure text between the starting and ending $$</param>
@@ -617,6 +637,7 @@ namespace PgSqlProcedureListUpdater
             string objectType,
             string objectNameWithSchema,
             Regex objectNameMatcher,
+            int overloadNumberToFind,
             out List<ArgumentInfo> argumentList,
             out List<string> headerLinesAfterArguments,
             out List<string> objectBody)
@@ -632,6 +653,8 @@ namespace PgSqlProcedureListUpdater
                 // Each line of the object header
                 var headerLines = new List<string>();
 
+                var overloadNumber = 0;
+
                 using var reader = new StreamReader(new FileStream(inputFile.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
 
                 while (!reader.EndOfStream)
@@ -643,6 +666,15 @@ namespace PgSqlProcedureListUpdater
 
                     if (!dataLine.Trim().StartsWith("CREATE OR REPLACE", StringComparison.OrdinalIgnoreCase))
                     {
+                        continue;
+                    }
+
+                    overloadNumber++;
+
+                    if (overloadNumberToFind > overloadNumber)
+                    {
+                        // Found an earlier overload; need to keep processing to find the next overload
+                        OnStatusEvent("Looking for overload {0} of {1} {2}", overloadNumberToFind, objectType, objectNameWithSchema);
                         continue;
                     }
 
@@ -809,6 +841,19 @@ namespace PgSqlProcedureListUpdater
                         headerLinesAfterArguments);
 
                     return true;
+                }
+
+                if (overloadNumber == 0)
+                {
+                    OnWarningEvent("Did not find \"CREATE OR REPLACE\" in file {0}", PathUtils.CompactPathString(inputFile.FullName, 120));
+                }
+                else if (overloadNumberToFind > 1)
+                {
+                    OnWarningEvent("Found overload {0} but not overload {1} in file {2}", overloadNumber, overloadNumberToFind, PathUtils.CompactPathString(inputFile.FullName, 120));
+                }
+                else
+                {
+                    OnWarningEvent("Unreachable code encountered while looking for overload {0} in file {1}", overloadNumberToFind, PathUtils.CompactPathString(inputFile.FullName, 120));
                 }
 
                 objectBody = new List<string>();
