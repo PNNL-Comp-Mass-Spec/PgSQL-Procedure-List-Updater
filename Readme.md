@@ -16,7 +16,7 @@ PgSqlProcedureListUpdater.exe
   /I:InputFilePath
   /D:SqlFilesDirectory
   [/O:OutputFilePath]
-  [/Verbose|/V]
+  [/V]
   [/ParamFile:ParamFileName.conf] [/CreateParamFile]
 ```
 
@@ -56,7 +56,7 @@ $$;
 
 * A new file is created with the updated DDL
 
-* Use [`/V`] to show additional status messages while processing the input file
+* Use `/V` to show additional status messages while processing the input file
 
 ## Contacts
 
