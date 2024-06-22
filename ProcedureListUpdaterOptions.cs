@@ -12,7 +12,7 @@ namespace PgSqlProcedureListUpdater
         /// <summary>
         /// Program date
         /// </summary>
-        public const string PROGRAM_DATE = "October 17, 2023";
+        public const string PROGRAM_DATE = "June 22, 2024";
 
         [Option("Input", "I", ArgPosition = 1, HelpShowsDefault = false, IsInputFilePath = true,
             HelpText = "SQL script file to process")]
