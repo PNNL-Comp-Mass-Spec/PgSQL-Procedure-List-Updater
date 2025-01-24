@@ -10,7 +10,7 @@ namespace PgSqlProcedureListUpdater
 {
     public class ProcedureListUpdater : EventNotifier
     {
-        // Ignore Spelling: Postgres
+        // Ignore Spelling: Postgres, Sql
 
         private const string COMMA_PLACEHOLDER = "_@_LITERAL_COMMA_@_";
 

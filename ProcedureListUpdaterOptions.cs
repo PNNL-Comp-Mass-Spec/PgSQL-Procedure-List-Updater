@@ -7,7 +7,7 @@ namespace PgSqlProcedureListUpdater
 {
     public class ProcedureListUpdaterOptions
     {
-        // Ignore Spelling: pre
+        // Ignore Spelling: App, pre, Sql
 
         /// <summary>
         /// Program date
